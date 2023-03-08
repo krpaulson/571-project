@@ -1,0 +1,311 @@
+---
+title: "571 project, some ideas for simulations"
+author: "Yinxiang Wu"
+date: "3/6/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE,include = FALSE)
+library(magrittr)
+library(mvtnorm)
+library(lme4)
+```
+
+
+### Background:
+
+LMM is widely used to model clustered data and repeated measurements. Compared to GEE, it has an advantage of making subject level predictions e.g. to estimate subject specific trajectories of outcome over time through BLUPs. These predicted values are often used in secondary analysis to examine how they are related to some external variables (either health outcomes or covariates). THe major problem with this type of analysis is that people often treat those predicted values as known and perfectly measured quantities, ignoring the potential uncertainty in making those predictions. It is well known in the measurement error literature that ignoring uncertainty in covariates can lead to biased estimates and underestimated standard errors, and ignoring that in outcomes can lead to underestimated standard errors. Although this is a well-known issue, to the best of knowledge, few literature have investigated it in the context of LMM and potential misuse of BLUPs in subsequent analysis. This project aims to perform extensive simulations to gain a better understanding of the issue when BLUPs are used for different purposes in subsequent analysis. 
+
+### Notations
+
+Let $Y$ denote a outcome, $X$ denote covariates, $Z$ denote design matrix for random effects, $a$ denote random intercept, $b$ denote random slopes, $\epsilon$ denote random noise, $(i,j)$ indicate subject $i$ at time point $j$, $\tilde X$ denote a set of external covariates (could overlap with $X$), $\tilde Y$ denote an external outcome.
+
+### Simulation 1
+
+Suppose we are interested in how change in the outcome $Y$ is associated with the external outcome $\tilde Y$. A typical approach in the literature is:
+
+1. Fit a LMM: $Y_{ij} = X_{ij}^T\beta + a_i + b_it_{ij} + e_{ij}$
+2. Obtain BLUPs: $\hat b_{i}$
+3. Fit a regression model: $g(E(\tilde Y_{i})) = \tilde X_{i}^T\gamma + \delta\hat b_{i}$
+4. report point estimate of $\hat \delta$ and its associated SEs
+
+To investigate the impact of ignoring the prediction error in $\hat b_{i}$ on the estimation of $\delta$, we consider the following simulation.
+
+Data generating model:
+
+1. Generate $(a_i, b_i) \sim N(0,\Sigma)$ where $\Sigma_{11} = \sigma_a^2$, $\Sigma_{12} = \rho\sigma_a\sigma_b$ and $\Sigma_{22} = \sigma_b^2$. $X_{ij} \sim N(s_{i},\sigma_x^2)$ where $s_i$ represents a subject specific shift and $s_{i} \sim N(0,1)$. $\tilde X_{i} \sim N(0,1)$
+2. Generate $Y_{ij} = \beta_0 + \beta_1 X_{ij} + a_i + (b_i + \beta_2) t_{ij} + \epsilon_{1ij}$ where $\epsilon_1 \sim N(0, \sigma_{e1}^2)$
+3. Generate $g(E(\tilde Y_{i})) = \gamma_0 + \gamma_1 \tilde X_{i} + \delta b_i$. When it is a linear model, a random noise $\epsilon_2 \sim N(0, \sigma_{e2}^2)$ is included.
+
+In this simulation setup, I considered the following factors: sample size $N = 30, 100$; number of time points $t = 2, 5$; true effect $\delta = 0, -0.5$; $\sigma_b^2 = 1, 3$ ;$\rho = 0, 0.5$ (correlation between random intercepts and random slopes); secondary model = linear or logistic. Hence, there are $2\times 2\times 2\times 2\times 2\times 2$ = 64 combinations.
+
+The following parameters are considered fixed across all scenarios: $\sigma_a^2 = 3$, $\sigma_{e1}^2 = 1$, $\sigma_{e2}^2 = 1$, $\sigma_x = 1$, $\beta_0 = 1$, $\beta_1 = -0.5$, $\beta_2 = 0.5$, $\gamma_0 = 0.5$, $\gamma_1 = 0.5$.
+
+Each scenario was run 5000 times. Empirical mean of estimated $\delta$, SD, SE and 95% coverage probability are summarized in the table below. They are also saved in the csv file "simulation1_results.csv".
+
+```{r,eval = FALSE}
+# simulation 1
+N_v = c(30,100)  # number of subjects
+t_v = c(3,6)
+delta_v = c(0, -0.5)
+sigma_b_v = c(1, 3)
+rho_v = c(0, 0.5)
+sec_m_v = c(1, 2) # 1 for linear regression 2 for logistic
+sim_settings <- expand.grid(N_v, t_v, delta_v, sigma_b_v, rho_v, sec_m_v)
+n_rep = 5000
+res <- matrix(nrow = nrow(sim_settings), ncol = 4)
+for (m in 1:nrow(sim_settings)) {
+  N <- sim_settings[m,1]
+  t <- sim_settings[m,2]
+  delta <- sim_settings[m,3]
+  sigma_b <- sim_settings[m,4]
+  rho <- sim_settings[m,5]
+  sec_m <- sim_settings[m,6]
+  # the following factors are considered fixed
+  sigma_a <- 3
+  sigma_e1 <- 1
+  sigma_e2 <- 1
+  sigma_x <- 1
+  beta0 <- 1
+  beta1 <- -0.5
+  beta2 <- 0.5
+  gamma0 <- 0.5
+  gamma1 <- 0.5
+  tmp_res <- matrix(nrow = n_rep, ncol = 2)
+  for (i in 1:n_rep) {
+    ab <- rmvnorm(N, mean = c(0,0), sigma = matrix(c(sigma_a^2,sigma_a*sigma_b*rho,
+                                                sigma_a*sigma_b*rho, sigma_b^2),2,2))
+    a_rep <- rep(ab[,1],each = t)
+    b <- ab[,2]
+    b_rep <- rep(ab[,2],each = t)
+    e1 <- rnorm(N*t, sd = sigma_e1)
+    e2 <- rnorm(N, sd = sigma_e2)
+    t_vec <- rep(1:t, N)
+    s <- rnorm(N)
+    x <- lapply(1:N, function(i) rnorm(t, mean = s[i], sd = sigma_x)) %>% Reduce("c",.)
+    x_tilde <- rnorm(N)
+    y1 <- beta0 + beta1 * x + a_rep + (b_rep + beta2) * t_vec + e1
+    if (sec_m == 1) {y2 <- gamma0 + gamma1 * x_tilde + delta * b + e2} else {
+      mu <- gamma0 + gamma1 * x_tilde + delta * b
+      p <- exp(mu)/(1+exp(mu))
+      y2 <- rbinom(N, size = 1, p)
+    }
+    dat1 <- data.frame(id = rep(1:N, each = t), t_vec, x, y1)
+    lmmfit <- lmer(y1 ~ (1 + t_vec|id) + t_vec + x, data = dat1)
+    b_hat <- ranef(lmmfit)$id$t_vec
+    if (sec_m == 1) {
+    lmfit <- lm(y2 ~ x_tilde + b_hat)
+    tmp_res[i,] <- summary(lmfit)$coefficients[3,1:2]
+    } else {
+      glmfit <- glm(y2 ~ x_tilde + b_hat, family = binomial)
+      tmp_res[i,] <- summary(glmfit)$coefficients[3,1:2]
+    }
+  }
+  est <- mean(tmp_res[,1])
+  est_sd <- sd(tmp_res[,1])
+  est_se <- mean(tmp_res[,2])
+  est_cp <- mean(tmp_res[,1] + qnorm(0.025) * tmp_res[,2] < delta & delta < tmp_res[,1] + qnorm(0.975) * tmp_res[,2])
+  res[m,] <- c(est, est_sd, est_se, est_cp)
+  cat("finish simulation m =",m)
+}
+res.to.save <- cbind(sim_settings, round(res,3))
+colnames(res.to.save) <- c('N','t','delta','sigma_b','rho','model','Est','SD','SE','CP')
+res.to.save$model <- ifelse(res.to.save$model == 1,'Linear','Logistic')
+#write.csv(res.to.save, "simulation1_results.csv",row.names = FALSE)
+print(res.to.save)
+```
+
+```{r,include=TRUE}
+sim1_res <- read.csv("simulation1_results.csv")
+print(sim1_res)
+```
+
+Main observations: when the secondary model is linear, we do not observe bias in all all scenarios except that SE estimates are a little underestimated and hence lead to slightly lower than nominal level coverage probability. When the secondary model is logistic and the data were simulated under the null ($\delta$ = 0), we do not observe bias either. However, when $\delta$ is non-zero, we observe bias even when n is large.
+
+In the measurement error literature, there is a type of error called Berkson error. The Berkson error happens when the trueth $X = X^* + e$ where $X^*$ is an error prone variable e.g. predicted from another model, and $e$ is a random noise. This error model features that the variance of the truth $X$ is larger than the predicted value $X^*$ i.e. $X^*$ is underdispersed. It is well known that Berkson error in a covariate will not lead to bias but cause underestimated SEs and hence poor coverage probability. If we consider the true random slope $b$ as $X$ and $\hat b$ as $X^*$, we kind of have Berkson error in our second stage model. In particular, $\hat b$ as a shrinkage estimator is underdispersed. Hence, our result agrees with measurement error literature.
+
+### Simulation 2
+
+Suppose we are interested in how change in the outcome $Y$ is associated with an external covariate $\tilde X$. A typical approach in the literature is:
+
+1. Fit a LMM: $Y_{ij} = X_{ij}^T\beta + a_i + b_it_{ij} + e_{ij}$
+2. Obtain BLUPs: $\hat b_{i}$
+3. Fit a regression model: $E(\hat b_{i}) = \tilde X_{i}^T\gamma$
+4. report point estimate of $\hat \gamma$ and its associated SEs
+
+To investigate the impact of ignoring the prediction error in $\hat b_{i}$ on the estimation of $\gamma$, we consider the following simulation.
+
+1. Generate $a_i =  \tilde X_i\delta_a\rho + \epsilon_a$, $b_i =  \tilde X_i\delta + \epsilon_b$ where $\tilde X_{i}$ follows a mean 0 normal distribution independent of $\epsilon_b$ a random noise (if $\tilde X$ is not mean 0, we could always shift it). $X_{ij} \sim N(s_{i},\sigma_x^2)$ where $s_i$ represents a subject specific shift and $s_{i} \sim N(0,1)$.
+2. Generate $Y_{ij} = \beta_0 + \beta_1 X_{ij} + a_i + (b_i + \beta_2) t_{ij} + \epsilon_{1ij}$ where $\epsilon_1 \sim N(0, \sigma_{e1}^2)$
+
+In this simulation setup, I considered the following factors: sample size $N = 30, 100$; number of time points $t = 3, 6$; true effect $\delta = 0, -0.5$; $\sigma_b^2 = 1, 3$ ;$\rho = 0, 0.5$ (when $\rho = 0$, there is no correlation between random intercepts and random slopes). Hence, there are $2\times 2\times 2\times 2\times 2$ = 32 combinations.
+
+The following parameters are considered fixed across all scenarios: $\sigma_a = 3$, $\sigma_{e1} = 1$, $\sigma_x = 1$,$\sigma_{\tilde x} = 1$, $\beta_0 = 1$, $\beta_1 = -0.5$, $\beta_2 = 0.5$, $\gamma_0 = 0.5$, $\gamma_1 = 0.5$, $\delta_a = -2$.
+
+Each scenario was run 5000 times. Empirical mean of estimated $\delta$, SD, SE and 95% coverage probability are summarized in the table below. They are also saved in the csv file "simulation2_results.csv".
+
+```{r,eval=FALSE}
+# simulation 2
+N_v = c(30,100)  # number of subjects
+t_v = c(3,6)
+delta_v = c(0, -0.5)
+sigma_b_v = c(1, 3)
+rho_v = c(0, 0.5)
+sim_settings <- expand.grid(N_v, t_v, delta_v, sigma_b_v, rho_v)
+n_rep = 5000
+res <- matrix(nrow = nrow(sim_settings), ncol = 4)
+for (m in 17:nrow(sim_settings)) {
+  N <- sim_settings[m,1]
+  t <- sim_settings[m,2]
+  delta <- sim_settings[m,3]
+  sigma_b <- sim_settings[m,4]
+  rho <- sim_settings[m,5]
+  # the following factors are considered fixed
+  sigma_a <- 3
+  sigma_e1 <- 1
+  sigma_e2 <- 1
+  sigma_x <- 1
+  sigma_x2 <- 1
+  beta0 <- 1
+  beta1 <- -0.5
+  beta2 <- 0.5
+  gamma0 <- 0.5
+  gamma1 <- 0.5
+  delta_a <- -2
+  tmp_res <- matrix(nrow = n_rep, ncol = 2)
+    for (i in 1:n_rep) {
+      x_tilde <- rnorm(N, sd = sigma_x2)
+      a <- x_tilde * delta_a * rho + rnorm(N, sd = sigma_a)
+      b <- x_tilde * delta + rnorm(N, sd = sigma_b)
+      a_rep <- rep(a,each = t)
+      b_rep <- rep(b,each = t)
+      e1 <- rnorm(N*t, sd = sigma_e1)
+      t_vec <- rep(1:3, N)
+      s <- rnorm(N)
+      x <- lapply(1:N, function(i) rnorm(t, mean = s[i], sd = sigma_x)) %>% Reduce("c",.)
+      y1 <- beta0 + beta1 * x + a_rep + (b_rep + beta2) * t_vec + e1
+      dat1 <- data.frame(id = rep(1:N, each = t), t_vec, x, y1)
+      lmmfit <- lmer(y1 ~ (1 + t_vec|id) + t_vec + x, data = dat1)
+      b_hat <- ranef(lmmfit)$id$t_vec
+      lmfit <- lm(b_hat ~ x_tilde)
+      tmp_res[i,] <- summary(lmfit)$coefficients[2,1:2]
+    }
+  est <- mean(tmp_res[,1])
+  est_sd <- sd(tmp_res[,1])
+  est_se <- mean(tmp_res[,2])
+  est_cp <- mean(tmp_res[,1] + qnorm(0.025) * tmp_res[,2] < delta & delta < tmp_res[,1] + qnorm(0.975) * tmp_res[,2])
+  res[m,] <- c(est, est_sd, est_se, est_cp)
+  cat("finish simulation m =",m)
+}
+res.to.save <- cbind(sim_settings, round(res,3))
+colnames(res.to.save) <- c('N','t','delta','sigma_b','rho','Est','SD','SE','CP')
+write.csv(res.to.save, "simulation2_results.csv",row.names = FALSE)
+```
+
+```{r,include=TRUE}
+simulation2_results <- read.csv('simulation2_results.csv')
+print(simulation2_results)
+```
+
+Main observations: these simulations suggest it is not recommended to use BLUPs in this type of analysis. Unbiased estimates are only observed under the null and when random intercepts and random slopes are uncorrelated. In all other scenarios (true parameter is non-zero or random intercepts and random slopes are correalted), we observe biased results. Also, SEs estimates are underestimated in almost all scenarios.
+
+### Simulation 3
+
+Suppose we are interested in how change in an outcome $Y_1$ is associated with change in another outcome $Y_2$. A typical approach in the literature (e.g. in ecology) is:
+
+1. Fit a LMM: $Y_{1ij} = X_{ij}^T\beta_1 + a_{1i} + b_{1i}t_{ij} + e_{1ij}$
+2. Fit a LMM: $Y_{2ij} = X_{ij}^T\beta_2 + a_{2i} + b_{2i}t_{ij} + e_{2ij}$
+3. Obtain BLUPs: $\hat b_{1i}$, $\hat b_{2i}$
+4. Perform a statistical test for the correlation between $\hat b_{1i}$ and $\hat b_{2i}$. Null hypothesis is there is no correlation between $b_1$ and $b_2$.
+
+We consider the following simulation.
+
+1. Generate $X_{ij} \sim N(s_{i},\sigma_x^2)$ where $s_i$ represents a subject specific shift and $s_{i} \sim N(0,1)$.
+2. Generate $a_{1i}$, $a_{2i}$, $b_{1i}$ and $b_{2i}$ from a multivariate normal distribution with mean 0 and covariance $\Sigma$ where $\Sigma_{33} = \sigma_{b1}^2$, $\Sigma_{44} = \sigma_{b2}^2$ and $\Sigma_{34} = \sigma_{b1}\sigma_{b2}\delta$, $\Sigma_{11} = \sigma_{a1}^2$, $\Sigma_{22} = \sigma_{a2}^2$, $\Sigma_{13} = \sigma_{b1}\sigma_{a}\rho$ and $\Sigma_{24} = \sigma_{b2}\sigma_{a}\rho$. $\delta$ quantify the strength of association between $b_{1i}$ and $b_{2i}$ and $\rho$ quantifies the association between random intercepts and random slopes.
+3. Generate $Y_{1ij} = \beta_{10} + \beta_{11} X_{ij} + a_{1i} + (b_{2i} + \beta_{12}) t_{ij} + \epsilon_{1ij}$ where $\epsilon_1 \sim N(0, \sigma_{e1}^2)$
+4. Generate $Y_{2ij} = \beta_{20} + \beta_{21} X_{ij} + a_{2i} + (b_{2i} + \beta_{22}) t_{ij} + \epsilon_{2ij}$ where $\epsilon_2 \sim N(0, \sigma_{e2}^2)$
+
+In this simulation setup, I considered the following factors: sample size $N = 30, 100$; number of time points $t = 3, 6$; true effect $\delta = 0, 0.5$; $\sigma_{b1}^2 = \sigma_{b2}^2= 1, 3$ ;$\rho = 0, 0.5$ (when $\rho = 0$, there is no correlation between random intercepts and random slopes). Hence, there are $2\times 2\times 2\times 2\times 2$ = 32 combinations.
+
+The following parameters are considered fixed across all scenarios: $\sigma_a = 3$, $\sigma_{e1} = 1$, $\sigma_x = 1$,$\sigma_{\tilde x} = 1$, $\beta_0 = 1$, $\beta_1 = -0.5$, $\beta_2 = 0.5$, $\gamma_0 = 0.5$, $\gamma_1 = 0.5$, $\delta_a = -2$.
+
+Each scenario was run 5000 times. Empirical mean of estimated $\delta$, SD, SE and 95% coverage probability are summarized in the table below. They are also saved in the csv file "simulation1_results.csv".
+
+```{r, eval = FALSE}
+# simulation 3
+N_v = c(30,100)  # number of subjects
+t_v = c(3,6)
+delta_v = c(0, -0.5)
+sigma_b_v = c(1, 3)
+rho_v = c(0, 0.5)
+sim_settings <- expand.grid(N_v, t_v, delta_v, sigma_b_v, rho_v)
+n_rep = 5000
+res <- matrix(nrow = nrow(sim_settings), ncol = 3)
+for (m in 1:nrow(sim_settings)) {
+  N <- sim_settings[m,1]
+  t <- sim_settings[m,2]
+  delta <- sim_settings[m,3]
+  sigma_b <- sim_settings[m,4]
+  rho <- sim_settings[m,5]
+  # the following factors are considered fixed
+  sigma_a1 <- 3
+  sigma_a2 <- 3
+  sigma_e1 <- 1
+  sigma_e2 <- 1
+  sigma_x <- 1
+  sigma_b1 <- sigma_b
+  sigma_b2 <- sigma_b
+  beta10 <- 1
+  beta11 <- -0.5
+  beta12 <- 0.5
+  beta20 <- 0.5
+  beta21 <- -0.2
+  beta22 <- -0.8
+  tmp_res <- matrix(nrow = n_rep, ncol = 3)
+  for (i in 1:n_rep) {
+    Sigma <- matrix(c(sigma_a1^2,0,sigma_a1 * sigma_b1 * rho, 0,
+                      0,sigma_a2^2,0,sigma_a2 * sigma_b2 * rho,
+                      sigma_a1 * sigma_b1 * rho,0,sigma_b1^2,sigma_b1 * sigma_b2 * delta,
+                      0,sigma_a2 * sigma_b2 * rho,sigma_b1 * sigma_b2 * delta,sigma_b2^2),4,4)
+    aabb <- rmvnorm(N, sigma = Sigma)
+    a1_rep <- rep(aabb[,1],each = t)
+    a2_rep <- rep(aabb[,2],each = t)
+    b1 <- aabb[,3]
+    b2 <- aabb[,4]
+    true.test <- cor.test(b1, b2)
+    b1_rep <- rep(b1,each = t)
+    b2_rep <- rep(b2,each = t)
+    e1 <- rnorm(N*t, sd = sigma_e1)
+    e2 <- rnorm(N*t, sd = sigma_e2)
+    t_vec <- rep(1:t, N)
+    s <- rnorm(N)
+    x <- lapply(1:N, function(i) rnorm(t, mean = s[i], sd = sigma_x)) %>% Reduce("c",.)
+    y1 <- beta10 + beta11 * x + a1_rep + (b1_rep + beta12) * t_vec + e1
+    y2 <- beta20 + beta21 * x + a2_rep + (b2_rep + beta22) * t_vec + e2
+    dat1 <- data.frame(id = rep(1:N, each = t), t_vec, x, y1)
+    lmmfit1 <- lmer(y1 ~ (1+t_vec|id) + t_vec + x, data = dat1)
+    b1_hat <- ranef(lmmfit1)$id$t_vec
+    dat2 <- data.frame(id = rep(1:N, each = t), t_vec, x, y2)
+    lmmfit2 <- lmer(y2 ~ (1+t_vec|id) + t_vec + x, data = dat2)
+    b2_hat <- ranef(lmmfit2)$id$t_vec
+    obs.test <- cor.test(b1_hat, b2_hat)
+    tmp_res[i,] <- c(true.test$p.value, obs.test$p.value,obs.test$estimate)
+  }
+  p.true <- mean(tmp_res[,1] < 0.05)
+  p.obs <- mean(tmp_res[,2] < 0.05)
+  est <- mean(tmp_res[,3])
+  res[m,] <- c(p.true,p.obs,est)
+  cat("finish simulation m =",m)
+}
+res.to.save <- cbind(sim_settings, round(res,3))
+colnames(res.to.save) <- c('N','t','delta','sigma_b','rho','true p < 0.05','obs p < 0.05','correlation coefficients')
+write.csv(res.to.save, "simulation3_results.csv",row.names = FALSE)
+```
+
+```{r,include=TRUE}
+simulation3_results <- read.csv('simulation3_results.csv')
+print(simulation3_results)
+```
+
+Main observations: type I error and power seem to be maintained (meaning similar to what we would observe if we had access to the true b1 and b2) when n is large. However, the correlation coefficients between BLUP $\hat b_1$ and $\hat b_2$ are biased estimates of the true correlation coefficient, unless the true correlation coefficient is 0.

@@ -1,0 +1,64 @@
+---
+title: "Tables"
+author: "Katie Paulson"
+date: "2023-03-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(tidyverse)
+library(kableExtra)
+```
+
+```{r}
+sim1 <- read.csv("simulation1_results.csv")
+```
+
+```{r}
+sim1 %>% 
+  mutate(Est = Est-delta) %>%
+  pivot_wider(id_cols = c(N, t, delta, sigma_b, rho),
+              names_from = model, values_from = c(Est, SD, SE, CP)) %>%
+  arrange(-delta) %>%
+  select(delta, N, t, sigma_b, rho, Est_Linear, SD_Linear, SE_Linear, CP_Linear,
+         Est_Logistic, SD_Logistic, SE_Logistic, CP_Logistic) %>%
+  kable("latex", booktabs = T, escape = F,
+        col.names = c("$\\delta$", "N", "t", "$\\sigma_b$", "$\\rho$", "Bias",
+                      "SD", "SE", "CP", "Bias", "SD", "SE", "CP"),
+        caption = "Scenario 1 results for $\\hat{\\delta}$ across 5000 simulations, including bias, empirical standard deviation, mean estimated standard error, and coverage percentage (CP) of 95\\% CIs.",
+        linesep = c('', '', '', '\\addlinespace')) %>%
+  add_header_above(c(" " = 5, "Linear" = 4, "Logistic" = 4))
+```
+
+
+```{r}
+sim2 <- read.csv("simulation2_results.csv")
+```
+
+```{r}
+sim2 %>% 
+  mutate(Est = Est-delta) %>%
+  arrange(-delta) %>%
+  select(delta, N, t, sigma_b, rho, Est, SD, SE, CP) %>%
+  kable("latex", booktabs = T, escape = F,
+        col.names = c("$\\delta$", "N", "t", "$\\sigma_b$", "$\\rho$", "Bias", "SD", "SE", "CP"),
+        caption = "Scenario 2 results for $\\hat{\\delta}$ across 5000 simulations, including bias, empirical standard deviation, mean estimated standard error, and coverage percentage (CP) of 95\\% CIs.",
+        linesep = c('', '', '', '\\addlinespace'))
+```
+
+```{r}
+sim3 <- read.csv("simulation3_results.csv")
+```
+
+```{r}
+names(sim3) <- c("N", "t", "delta", "sigma_b", "rho", "p_true", "p_est", "rho_hat")
+
+sim3 %>% 
+  arrange(-delta) %>%
+  select(delta, N, t, sigma_b, rho, rho_hat, p_true, p_est) %>%
+  kable("latex", booktabs = T, escape = F,
+        col.names = c("$\\delta$", "N", "t", "$\\sigma_b$", "$\\rho$", "$\\hat{\\rho}$", "p-value ($b_i$)", "p-value ($\\hat{b}_i$)"),
+        caption = "Scenario 3 results for testing the correlation of $b_{1i}$ and $b_{2i}$ across 5000 simulations, including estimated correlation, the p-value based on the unobserved $b_i$ and the p-value based on the estimated $\\hat{b_i}$.",
+        linesep = c('', '', '', '\\addlinespace'))
+```
